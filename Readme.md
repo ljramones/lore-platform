@@ -71,39 +71,29 @@ Build a durable, **canon-first** knowledge base for your fiction that:
 
 ```mermaid
 flowchart LR
-  subgraph Agents_Orchestrator
-    A1[Strands Agents] --> TMP[Temporal Workflows]
-    MEM[Mem0 (short-term memory)]
-    A1 --- MEM
-  end
+  A1["Strands Agents"] --> TMP["Temporal Workflows"]
+  A1 --- MEM["Mem0 (short-term memory)"]
 
-  subgraph MCP_Tools_stateless
-    W1[Doc Watcher]
-    P1[Parser]
-    H1[Web Harvester]
-    CLN[Cleaner/Chunker]
-    X1[NER + Coref]
-    X2[Relation/Timeline Extractor]
-    V1[Verifier (GPT-5/Claude/Gemini)]
-    T1[Trope Miner]
-  end
+  W1["Doc Watcher"]
+  P1["Parser"]
+  H1["Web Harvester"]
+  CLN["Cleaner/Chunker"]
+  X1["NER + Coref"]
+  X2["Relation/Timeline Extractor"]
+  V1["Verifier (GPT-5/Claude/Gemini)"]
+  T1["Trope Miner"]
 
-  subgraph Services_stateful_APIs
-    RQ[Review Queue API]
-    LQ[Lore Query API]
-    RAG[RAG API]
-    UI[Lore Console]
-  end
+  RQ["Review Queue API"]
+  LQ["Lore Query API"]
+  RAG["RAG API"]
+  UI["Lore Console"]
 
-  subgraph Persistence
-    DB1[(Canon DB)]
-    DB2[(Research DB)]
-    DB3[(Idea/Trope DB)]
-    VEC[(Vector Store)]
-    BLOB[(Blob Store)]
-  end
+  DB1["Canon DB"]
+  DB2["Research DB"]
+  DB3["Idea/Trope DB"]
+  VEC["Vector Store"]
+  BLOB["Blob Store"]
 
-  %% Orchestration fan-out (expanded; no '&')
   TMP --> W1
   TMP --> H1
   TMP --> X1
@@ -111,34 +101,25 @@ flowchart LR
   TMP --> V1
   TMP --> T1
 
-  %% Ingest / parse flows
   W1 --> P1
   P1 --> DB1
 
-  %% Web research pipeline
   H1 --> CLN
   CLN --> DB2
   CLN --> VEC
   CLN --> BLOB
 
-  %% Extraction proposals
   X1 --> RQ
   X2 --> RQ
   V1 --> RQ
-
-  %% Review promotions
   RQ --> DB1
-
-  %% Trope lane
   T1 --> DB3
 
-  %% RAG wiring (make bidirectional with two lines each)
   RAG --> DB2
   DB2 --> RAG
   RAG --> VEC
   VEC --> RAG
 
-  %% UI wiring (bidirectional, expanded; no '<--->' or '&')
   UI --> RQ
   RQ --> UI
   UI --> LQ
