@@ -480,12 +480,6 @@ All returns are JSON; pagination and filtering via query params.
 
 ---
 
-### Final Notes
-
-* Keep **lanes** explicit and always visible.
-* **Evidence or it didn’t happen**—this keeps canon trustworthy.
-* Start **local-first**; add cloud verification only when needed.
 * Temporal gives you durable workflows and human gates without duct-tape cron jobs.
 
-When you’re ready, we can turn this concept into a scaffold (folders, stub endpoints, and minimal DDL) you can drop into a repo.
 
