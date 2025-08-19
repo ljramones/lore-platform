@@ -71,13 +71,13 @@ Build a durable, **canon-first** knowledge base for your fiction that:
 
 ```mermaid
 flowchart LR
-  subgraph Agents/Orchestrator
+  subgraph Agents_Orchestrator
     A1[Strands Agents] --> TMP[Temporal Workflows]
     MEM[Mem0 (short-term memory)]
     A1 --- MEM
   end
 
-  subgraph MCP Tools (stateless)
+  subgraph MCP_Tools_stateless
     W1[Doc Watcher]
     P1[Parser]
     H1[Web Harvester]
@@ -88,7 +88,7 @@ flowchart LR
     T1[Trope Miner]
   end
 
-  subgraph Services (stateful APIs)
+  subgraph Services_stateful_APIs
     RQ[Review Queue API]
     LQ[Lore Query API]
     RAG[RAG API]
@@ -103,17 +103,48 @@ flowchart LR
     BLOB[(Blob Store)]
   end
 
-  TMP --> W1 & H1 & X1 & X2 & V1 & T1
-  W1 --> P1 --> DB1
-  H1 --> CLN --> DB2 & VEC & BLOB
+  %% Orchestration fan-out (expanded; no '&')
+  TMP --> W1
+  TMP --> H1
+  TMP --> X1
+  TMP --> X2
+  TMP --> V1
+  TMP --> T1
+
+  %% Ingest / parse flows
+  W1 --> P1
+  P1 --> DB1
+
+  %% Web research pipeline
+  H1 --> CLN
+  CLN --> DB2
+  CLN --> VEC
+  CLN --> BLOB
+
+  %% Extraction proposals
   X1 --> RQ
   X2 --> RQ
   V1 --> RQ
+
+  %% Review promotions
   RQ --> DB1
+
+  %% Trope lane
   T1 --> DB3
-  RAG <---> DB2 & VEC
-  LQ --> DB1
-  UI <---> RQ & LQ & RAG
+
+  %% RAG wiring (make bidirectional with two lines each)
+  RAG --> DB2
+  DB2 --> RAG
+  RAG --> VEC
+  VEC --> RAG
+
+  %% UI wiring (bidirectional, expanded; no '<--->' or '&')
+  UI --> RQ
+  RQ --> UI
+  UI --> LQ
+  LQ --> UI
+  UI --> RAG
+  RAG --> UI
 ```
 
 ---
