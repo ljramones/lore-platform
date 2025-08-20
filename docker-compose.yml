@@ -177,6 +177,59 @@ services:
     restart: unless-stopped
     networks:
       - lore-net
+  lore-api:
+    build:
+      context: .
+      dockerfile: src/lore_api/Dockerfile
+    environment:
+      LORE_DB_PATH: /app/data/lore.db
+    volumes:
+      - ./data:/app/data:ro
+    ports:
+      - "8090:8080"
+    depends_on:
+      - lore-worker
+    networks:
+      - lore-net
+
+  lore-indexer:
+    build:
+      context: .
+      dockerfile: src/lore_indexer/Dockerfile
+    environment:
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_COLLECTION: lore-sections
+      EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      INDEX_INTERVAL: "30"
+      BATCH_SIZE: "64"
+      LORE_DB_PATH: /app/data/lore.db
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - chroma
+      - lore-worker
+    restart: unless-stopped
+    networks:
+      - lore-net
+
+  lore-search:
+    build:
+      context: .
+      dockerfile: src/lore_search/Dockerfile
+    environment:
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_COLLECTION: lore-sections
+      EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    ports:
+      - "8091:8080"
+    depends_on:
+      - chroma
+      - lore-indexer
+    restart: unless-stopped
+    networks:
+      - lore-net
 
 networks:
   lore-net:
