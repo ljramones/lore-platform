@@ -3,3 +3,10 @@
 .env
 
 .idea
+
+inbox
+src/lore_common/__pycache__/
+src/lore_platform.egg-info/
+src/lore_watcher/__pycache__/
+src/lore_worker/__pycache__/
+test/__pycache__/
