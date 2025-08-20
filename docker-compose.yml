@@ -17,6 +17,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    networks:
+      - lore-net
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- Temporal backing Postgres ----------
@@ -36,6 +38,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    networks:
+      - lore-net
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- Temporal server ----------
@@ -54,6 +58,8 @@ services:
         condition: service_healthy
     ports:
       - "7233:7233"
+    networks:
+      - lore-net
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- Temporal UI ----------
@@ -62,12 +68,13 @@ services:
     container_name: lore-temporal-ui
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      # TEMPORAL_CORS_ORIGINS: http://localhost:8088
     depends_on:
       - temporal
-
     ports:
       - "8088:8080"
+    networks:
+      - lore-net
+
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- Temporal admin tools (optional) ----------
@@ -77,10 +84,11 @@ services:
     environment:
       TEMPORAL_ADDRESS: temporal:7233
     depends_on:
-      temporal:
-        condition: service_healthy
-    profiles: ["tools"]
-    entrypoint: ["/bin/bash","-c","sleep infinity"]
+      - temporal
+    profiles: [ "tools" ]
+    entrypoint: [ "/bin/bash","-c","sleep infinity" ]
+    networks:
+      - lore-net
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- MinIO (optional S3-compatible blob store) ----------
@@ -96,41 +104,52 @@ services:
       - "9001:9001"   # Console
     volumes:
       - ./data/minio:/data
-    profiles: ["minio"]
+    profiles:
+      - "minio"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 20
+    networks:
+      - lore-net
     # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
 
   # ---------- Lore watcher/worker services ----------
   lore-worker:
     build:
-      context: ./src
-      dockerfile: lore_worker/Dockerfile
-    container_name: lore-worker
+      context: .
+      dockerfile: src/lore_worker/Dockerfile
     environment:
-      TEMPORAL_TARGET: temporal:7233
-      TEMPORAL_TASK_QUEUE: lore-ingest
-      CANON_DB: /app/data/db/canon.sqlite
+      TEMPORAL_ADDRESS: temporal:7233
+      TASK_QUEUE: lore-ingest
+      LORE_DB_PATH: /app/data/lore.db
     volumes:
-      - ./data/db:/app/data/db
+      - ./data:/app/data
+      - ./inbox:/app/inbox
     depends_on:
-      temporal:
-        condition: service_started
+      - temporal
+    restart: unless-stopped
+    networks:
+      - lore-net
 
   lore-watcher:
     build:
-      context: ./src
-      dockerfile: lore_watcher/Dockerfile
-    container_name: lore-watcher
+      context: .
+      dockerfile: src/lore_watcher/Dockerfile
     environment:
-      TEMPORAL_TARGET: temporal:7233
-      TEMPORAL_TASK_QUEUE: lore-ingest
+      TEMPORAL_ADDRESS: temporal:7233
+      TASK_QUEUE: lore-ingest
       INBOX_DIR: /app/inbox
     volumes:
       - ./inbox:/app/inbox
     depends_on:
-      temporal:
-        condition: service_started
+      - temporal
+      - lore-worker
+    restart: unless-stopped
+    networks:
+      - lore-net
+
+networks:
+  lore-net:
+    driver: bridge
