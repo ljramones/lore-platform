@@ -1,4 +1,4 @@
-# src/lore_watcher/Dockerfile
+# src/lore_scheduler/Dockerfile
 FROM python:3.11-slim
 
 # Fast, clean Python
@@ -21,16 +21,17 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 # Runtime defaults (override in compose)
 ENV TEMPORAL_ADDRESS=temporal:7233 \
     TASK_QUEUE=lore-ingest \
-    INBOX_DIR=/app/inbox
+    SCHED_INTERVAL=5
 
-# Create inbox and run as non-root
+# Run as non-root
 RUN adduser --disabled-password --gecos '' appuser \
- && mkdir -p "$INBOX_DIR" \
  && chown -R appuser:appuser /app
 USER appuser
 
-# Healthcheck without heredoc
+# Lightweight healthcheck (no heredoc)
 HEALTHCHECK --interval=20s --timeout=5s --retries=5 \
-  CMD ["python","-c","import os,socket,sys,os.path; addr=os.getenv('TEMPORAL_ADDRESS','temporal:7233'); h,p=(addr.split(':')+['7233'])[:2]; socket.create_connection((h,int(p)),timeout=3).close(); d=os.getenv('INBOX_DIR','/app/inbox'); os.makedirs(d,exist_ok=True); sys.exit(0)"]
+  CMD python -c "import os,socket; a=os.getenv('TEMPORAL_ADDRESS','temporal:7233'); h,p=(a.split(':')+['7233'])[:2]; socket.create_connection((h,int(p)),timeout=3).close()"
 
-CMD ["python","-m","lore_watcher"]
+CMD ["python","-m","lore_scheduler"]
+
+

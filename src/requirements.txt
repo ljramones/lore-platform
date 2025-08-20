@@ -6,3 +6,4 @@ markdown-it-py>=3.0
 sqlmodel>=0.0.22
 pydantic>=2.7
 uvloop; platform_system!="Windows"
+spacy>=3.7

@@ -150,6 +150,34 @@ services:
     networks:
       - lore-net
 
+  lore-ner:
+    build:
+      context: .
+      dockerfile: src/lore_ner/Dockerfile
+    environment:
+      SPACY_MODEL: en_core_web_sm   # override here if you want a larger model
+    depends_on:
+      - temporal       # only if it talks to Temporal; otherwise remove
+    restart: unless-stopped
+    networks:
+      - lore-net
+    # platform: linux/arm64/v8   # uncomment on Apple Silicon if wheels complain
+
+  lore-scheduler:
+    build:
+      context: .                       # repo root
+      dockerfile: src/lore_scheduler/Dockerfile
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TASK_QUEUE: lore-ingest
+      SCHED_INTERVAL: "5"
+    depends_on:
+      - temporal
+      - lore-worker
+    restart: unless-stopped
+    networks:
+      - lore-net
+
 networks:
   lore-net:
     driver: bridge

@@ -1,8 +1,9 @@
 # ingest_workflow.py
-from datetime import timedelta
 from temporalio import workflow
 
 from temporalio.common import RetryPolicy
+
+from datetime import timedelta   # <-- add this at top
 
 @workflow.defn
 class IngestWorkflow:
