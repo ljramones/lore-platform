@@ -1,5 +1,6 @@
 # src/lore_common/db.py
-
+import json
+import re
 import os
 from pathlib import Path
 from typing import Iterable, Optional, List, Union, Dict
@@ -7,6 +8,54 @@ from datetime import datetime
 
 from sqlalchemy import UniqueConstraint, event
 from sqlmodel import SQLModel, Field, Relationship, Session, create_engine, select
+
+# ---------- New: core canon entities/aliases ----------
+class Entity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    type: str = Field(index=True)  # 'character'|'place'|'artifact'|'faction'|'legend'|'motif'
+    display_name: str = Field(index=True)
+    attrs_json: str = Field(default="{}")     # JSON text
+    notes: str = Field(default="")
+    lane: str = Field(default="canon", index=True)  # keep 'canon' for now
+
+
+class Alias(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("entity_id", "name", name="uix_alias_entity_name"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    entity_id: int = Field(foreign_key="entity.id", index=True)
+    name: str = Field(index=True)
+
+# ---------- New: proposals for relations ----------
+# For MVP, object can be either another entity OR a section (for appears_in).
+class ProposedRelation(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint(
+            "subj_entity_id", "predicate", "obj_entity_id", "obj_kind", "obj_ref_id",
+            "document_id", "section_id", name="uix_proposed_rel_dedupe"
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    # subject
+    subj_entity_id: Optional[int] = Field(default=None, index=True)
+
+    # predicate (controlled vocab, stored as string)
+    predicate: str = Field(index=True)  # e.g., 'appears_in', 'located_in'
+
+    # object (one of: entity | section)
+    obj_kind: str = Field(index=True)   # 'entity' | 'section' | 'place'
+    obj_entity_id: Optional[int] = Field(default=None, index=True)
+    obj_ref_id: Optional[int] = Field(default=None, index=True)  # section_id when obj_kind='section'
+
+    # evidence / provenance
+    document_id: int = Field(index=True)
+    section_id: int = Field(index=True)
+    evidence_json: str = Field(default="[]")  # JSON text: list of [start,end] offsets
+    confidence: float = Field(default=0.75)
+    lane: str = Field(default="canon", index=True)
+    status: str = Field(default="pending", index=True)  # 'pending'|'accepted'|'rejected'
+    reasons: str = Field(default="")  # freeform note for why proposed / rule name
 
 # ---------- DB URL / engine ----------
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -168,4 +217,151 @@ def docs_without_mentions(limit: int = 50) -> list[int]:
             .limit(limit)
         )
         # In your versions, exec returns ScalarResult (iterable of ints) already
+        return list(s.exec(stmt))
+
+
+# --- util: coarse label→entity.type mapping for MVP
+def _entity_type_from_label(label: str) -> str:
+    lab = (label or "").upper()
+    if lab in ("GPE", "LOC"):
+        return "place"
+    if lab in ("PERSON",):
+        return "character"
+    if lab in ("ORG",):
+        return "faction"
+    # fallback:
+    return "legend"  # neutral-ish bucket for unknowns
+
+# --- util: normalize surface form (very basic; can swap later for fuzzy)
+def _canon_name(surface: str) -> str:
+    s = surface.strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def resolve_or_create_entity(session: Session, surface: str, label: str) -> Entity:
+    name = _canon_name(surface)
+    etype = _entity_type_from_label(label)
+    # try Alias hit first
+    alias = session.exec(select(Alias).where(Alias.name == name)).first()
+    if alias:
+        ent = session.get(Entity, alias.entity_id)
+        if ent:
+            return ent
+
+    # else try the exact entity display_name
+    ent = session.exec(
+        select(Entity).where(Entity.display_name == name).where(Entity.type == etype)
+    ).first()
+    if ent:
+        # ensure alias exists
+        if not session.exec(
+            select(Alias).where(Alias.entity_id == ent.id, Alias.name == name)
+        ).first():
+            session.add(Alias(entity_id=ent.id, name=name))
+            session.flush()
+        return ent
+
+    # create new
+    ent = Entity(type=etype, display_name=name)
+    session.add(ent)
+    session.flush()
+    session.add(Alias(entity_id=ent.id, name=name))
+    session.flush()
+    return ent
+
+# --- propose 'appears_in' for every mention (entity -> section)
+def propose_appears_in_for_doc(doc_id: int, min_conf: float = 0.80, rule_name: str = "rule:appears_in") -> int:
+    count = 0
+    with get_session() as s:
+        mentions = list(s.exec(select(Mention).where(Mention.document_id == doc_id)))
+        if not mentions:
+            return 0
+
+        # cache sections to ensure they exist
+        secs = {sec.id: sec for sec in s.exec(select(Section).where(Section.document_id == doc_id))}
+
+        for m in mentions:
+            ent = resolve_or_create_entity(s, m.surface, m.label)
+            evidence = [[m.start_char_section, m.end_char_section]]
+            pr = ProposedRelation(
+                subj_entity_id=ent.id,
+                predicate="appears_in",
+                obj_kind="section",
+                obj_ref_id=m.section_id,
+                document_id=doc_id,
+                section_id=m.section_id,
+                evidence_json=json.dumps(evidence),
+                confidence=max(min_conf, 0.80),
+                reasons=rule_name,
+            )
+            # dedupe via unique index; catch on commit
+            s.add(pr)
+            try:
+                s.commit()
+                count += 1
+            except Exception:
+                s.rollback()
+                # unique collision → ignore
+        return count
+
+# --- propose 'located_in' (entity -> place) when a PERSON/ORG appears near a GPE/LOC in same section
+def propose_located_in_for_doc(doc_id: int, window_chars: int = 200, base_conf: float = 0.70, rule_name: str = "rule:located_in_window") -> int:
+    count = 0
+    with get_session() as s:
+        # group mentions per section
+        sec_to_mentions: Dict[int, List[Mention]] = {}
+        for m in s.exec(select(Mention).where(Mention.document_id == doc_id)):
+            sec_to_mentions.setdefault(m.section_id, []).append(m)
+
+        for section_id, mlist in sec_to_mentions.items():
+            # split into candidates
+            persons = [m for m in mlist if _entity_type_from_label(m.label) in ("character", "faction")]
+            places  = [m for m in mlist if _entity_type_from_label(m.label) == "place"]
+            if not persons or not places:
+                continue
+
+            for p in persons:
+                for q in places:
+                    # proximity check within the same section
+                    if abs(p.start_char_section - q.start_char_section) <= window_chars:
+                        subj = resolve_or_create_entity(s, p.surface, p.label)
+                        obj  = resolve_or_create_entity(s, q.surface, q.label)
+                        evidence = [
+                            [min(p.start_char_section, q.start_char_section),
+                             max(p.end_char_section, q.end_char_section)]
+                        ]
+                        pr = ProposedRelation(
+                            subj_entity_id=subj.id,
+                            predicate="located_in",
+                            obj_kind="entity",
+                            obj_entity_id=obj.id,
+                            obj_ref_id=None,
+                            document_id=doc_id,
+                            section_id=section_id,
+                            evidence_json=json.dumps(evidence),
+                            confidence=base_conf,
+                            reasons=rule_name,
+                        )
+                        s.add(pr)
+                        try:
+                            s.commit()
+                            count += 1
+                        except Exception:
+                            s.rollback()
+        return count
+
+# --- convenience: batch proposal driver for a document
+def propose_relations_for_doc(doc_id: int) -> Dict[str, int]:
+    return {
+        "appears_in": propose_appears_in_for_doc(doc_id),
+        "located_in": propose_located_in_for_doc(doc_id),
+    }
+
+# --- fetch pending proposals (for worker / API / review)
+def pending_relations(limit: int = 100, predicates: Optional[List[str]] = None) -> List[ProposedRelation]:
+    with get_session() as s:
+        stmt = select(ProposedRelation).where(ProposedRelation.status == "pending")
+        if predicates:
+            stmt = stmt.where(ProposedRelation.predicate.in_(predicates))  # type: ignore[attr-defined]
+        stmt = stmt.order_by(ProposedRelation.id).limit(limit)
         return list(s.exec(stmt))

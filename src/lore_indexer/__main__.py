@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 from sqlmodel import select
 from lore_common.db import get_session, Document, Section
 
-LOG = logging.getLogger("lore-indexer")
+LOG = logging.getLogger("lore_indexer")
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"))
 
 CHROMA_HOST = os.getenv("CHROMA_HOST", "chroma")
