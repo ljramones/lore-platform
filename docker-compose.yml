@@ -1,0 +1,136 @@
+services:
+  # ---------- Vector store ----------
+  # patch only the chroma service
+  chroma:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: lore-chroma
+    environment:
+      CHROMA_SERVER_HOST: 0.0.0.0
+      CHROMA_SERVER_HTTP_PORT: ${CHROMA_PORT:-8000}
+      ALLOW_RESET: "1"
+    volumes:
+      - ./data/chroma:/data          # match the log's /data
+    ports:
+      - "${CHROMA_PORT:-8000}:8000"
+    healthcheck:
+      test: [ "CMD", "bash", "-lc", "curl -fsS http://localhost:8000/api/v2/healthcheck >/dev/null" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- Temporal backing Postgres ----------
+  temporal-postgres:
+    image: postgres:15
+    container_name: lore-temporal-pg
+    environment:
+      POSTGRES_USER: ${TEMPORAL_DB_USER:-temporal}
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PWD:-temporal}
+      POSTGRES_DB: ${TEMPORAL_DB_NAME:-temporal}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/temporal/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEMPORAL_DB_USER:-temporal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- Temporal server ----------
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: lore-temporal
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${TEMPORAL_DB_USER:-temporal}
+      POSTGRES_PWD: ${TEMPORAL_DB_PWD:-temporal}
+      POSTGRES_SEEDS: temporal-postgres
+      POSTGRES_DB: ${TEMPORAL_DB_NAME:-temporal}
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    ports:
+      - "7233:7233"
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- Temporal UI ----------
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: lore-temporal-ui
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      # TEMPORAL_CORS_ORIGINS: http://localhost:8088
+    depends_on:
+      - temporal
+
+    ports:
+      - "8088:8080"
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- Temporal admin tools (optional) ----------
+  temporal-admin-tools:
+    image: temporalio/admin-tools:latest
+    container_name: lore-temporal-tools
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+    profiles: ["tools"]
+    entrypoint: ["/bin/bash","-c","sleep infinity"]
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- MinIO (optional S3-compatible blob store) ----------
+  minio:
+    image: minio/minio:latest
+    container_name: lore-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-loreminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme-strong}
+    command: server --console-address ":9001" /data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    volumes:
+      - ./data/minio:/data
+    profiles: ["minio"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # platform: linux/arm64/v8  # uncomment on Apple Silicon if needed
+
+  # ---------- Lore watcher/worker services ----------
+  lore-worker:
+    build:
+      context: ./src
+      dockerfile: lore_worker/Dockerfile
+    container_name: lore-worker
+    environment:
+      TEMPORAL_TARGET: temporal:7233
+      TEMPORAL_TASK_QUEUE: lore-ingest
+      CANON_DB: /app/data/db/canon.sqlite
+    volumes:
+      - ./data/db:/app/data/db
+    depends_on:
+      temporal:
+        condition: service_started
+
+  lore-watcher:
+    build:
+      context: ./src
+      dockerfile: lore_watcher/Dockerfile
+    container_name: lore-watcher
+    environment:
+      TEMPORAL_TARGET: temporal:7233
+      TEMPORAL_TASK_QUEUE: lore-ingest
+      INBOX_DIR: /app/inbox
+    volumes:
+      - ./inbox:/app/inbox
+    depends_on:
+      temporal:
+        condition: service_started

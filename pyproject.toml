@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lore-platform"
+version = "0.1.0"
+description = "Lore platform (worker, watcher, common)"
+requires-python = ">=3.10"
+# If you want to fold src/requirements.txt here, list them under dependencies = []
+# or keep using requirements.txt separately as shown below.
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+lore-worker = "lore_worker.__main__:main"
+lore-watcher = "lore_watcher.__main__:main"

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lore-common"
+version = "0.1.0"
+description = "Common helpers for lore"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["lore_common"]
